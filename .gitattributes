@@ -1,2 +1,0 @@
-echo "*.html linguist-language=C++" > .gitattributes
-echo "*.css linguist-language=C++" >> .gitattributes

@@ -1,5 +1,8 @@
 # Macro Placement Challenge Submission
 
+This repository provides a macro placer for the Macro Placement Challenge.
+
+
 
 ## 1. Docker Option
 
@@ -7,9 +10,6 @@ A pre-built Docker image can also be used to avoid manually building DREAMPlace 
 
 Download the Docker snapshot from:
 
-This repository provides a macro placer for the Macro Placement Challenge.
-
-The submission entry is:
 
 
 ## 2. Configure `run_json`

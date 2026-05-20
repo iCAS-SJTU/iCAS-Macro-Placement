@@ -1,4 +1,4 @@
-# Macro Placement Challenge Submission
+# README for iCAS-Macro-Placement
 
 This repository provides a macro placer for the Macro Placement Challenge.
 
@@ -6,7 +6,7 @@ This repository provides a macro placer for the Macro Placement Challenge.
 
 ## 1. Docker Option
 
-A pre-built Docker image can also be used to avoid manually building DREAMPlace and setting up the Python environment.
+A pre-built Docker image can be used to avoid manually building our placer and setting up the Python environment.
 
 Download the Docker snapshot from:
 

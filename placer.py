@@ -63,12 +63,41 @@ class Placer:
     def __init__(self):
         self.verbose = self._bool_env("MPC_VERBOSE", False)
         self.auto_cluster = self._bool_env("MPC_AUTO_CLUSTER", False)
-        self.run_json_dir = Path(
+
+        # place.py is expected to be located at:
+        #   <repo_root>/submissions/examples/place.py
+        self.this_dir = Path(__file__).resolve().parent
+        try:
+            self.repo_root = self.this_dir.parents[1]
+        except IndexError:
+            self.repo_root = Path.cwd()
+
+        # Always use ibm01.json as a template JSON.
+        # The real case_name and benchmark_dir are overwritten at runtime
+        # according to benchmark.name or the evaluator argument "-b ibmXX".
+        self.template_json = Path(
             os.environ.get(
-                "MPC_RUN_JSON_DIR",
-                "/run_json",
+                "MPC_TEMPLATE_JSON",
+                str(self.repo_root / "run_json" / "ibm01.json"),
             )
         )
+
+        # Default MacroPlacement testcase root.
+        # For case ibmXX, benchmark_dir will be:
+        #   <benchmark_root>/ibmXX
+        self.benchmark_root = Path(
+            os.environ.get(
+                "MPC_BENCHMARK_ROOT",
+                str(
+                    self.repo_root
+                    / "external"
+                    / "MacroPlacement"
+                    / "Testcases"
+                    / "ICCAD04"
+                ),
+            )
+        )
+
         self._log_file_handle = None
 
     def place(self, benchmark):
@@ -983,32 +1012,65 @@ class Placer:
             pass
         return self._case_name_from_argv()
 
+    def _resolve_benchmark_dir(self, case_name):
+        """
+        Resolve MacroPlacement benchmark directory from the real case name.
+
+        Example:
+            case_name      = ibm01
+            benchmark_dir  = external/MacroPlacement/Testcases/ICCAD04/ibm01
+        """
+        case_name = str(case_name).lower()
+
+        candidate_dirs = [
+            self.benchmark_root / case_name,
+            self.repo_root / "external" / "MacroPlacement" / "Testcases" / "ICCAD04" / case_name,
+            Path("/external") / "MacroPlacement" / "Testcases" / "ICCAD04" / case_name,
+            Path("/Macro_challenge_2026") / "Macro-Placement" / "external" / "MacroPlacement" / "Testcases" / "ICCAD04" / case_name,
+            Path("/Macro_challenge_2026") / "macro-place-challenge-2026" / "external" / "MacroPlacement" / "Testcases" / "ICCAD04" / case_name,
+        ]
+
+        for d in candidate_dirs:
+            if d.exists():
+                return d
+
+        # Return the default expected path even if it does not exist.
+        # The following loader will then report a clear file-not-found error.
+        return self.benchmark_root / case_name
+
     def _resolve_json_file(self, benchmark=None, json_file=None):
+        """
+        Always resolve to ibm01.json as the template JSON.
+
+        The actual benchmark case is not determined by the JSON filename.
+        Instead, run_placement() overwrites:
+            params.case_name
+            params.benchmark_dir
+        according to benchmark.name or the evaluator argument "-b ibmXX".
+        """
         if json_file is not None:
             json_path = Path(json_file)
             if json_path.exists():
                 return json_path
-            raise FileNotFoundError(f'JSON file not found: {json_path}')
-        case_name = None
-        if benchmark is not None:
-            case_name = self._infer_case_name_from_benchmark(benchmark)
-        if case_name is None:
-            case_name = self._case_name_from_argv()
-        candidate_dirs = [self.run_json_dir, Path.cwd() / 'run_json', Path.cwd() / 'macro-place-challenge-2026' / 'run_json', Path('/Macro_challenge_2026/macro-place-challenge-2026/run_json')]
-        if case_name is not None:
-            for d in candidate_dirs:
-                p = d / f'{case_name}.json'
-                if p.exists():
-                    return p
-            raise FileNotFoundError(f'Cannot find {case_name}.json in candidate run_json dirs: {[str(d) for d in candidate_dirs]}')
-        json_files = []
-        for d in candidate_dirs:
-            if d.exists():
-                json_files.extend(sorted(d.glob('ibm*.json')))
-        json_files = list(dict.fromkeys(json_files))
-        if len(json_files) == 1:
-            return json_files[0]
-        raise RuntimeError("Cannot infer benchmark case name. Please run evaluate with '-b ibmXX' or set MPC_RUN_JSON_DIR to the directory containing ibmXX.json.")
+            raise FileNotFoundError(f"JSON file not found: {json_path}")
+
+        candidate_jsons = [
+            self.template_json,
+            self.repo_root / "run_json" / "ibm01.json",
+            Path.cwd() / "run_json" / "ibm01.json",
+            Path("/run_json") / "ibm01.json",
+            Path("/Macro_challenge_2026") / "Macro-Placement" / "run_json" / "ibm01.json",
+            Path("/Macro_challenge_2026") / "macro-place-challenge-2026" / "run_json" / "ibm01.json",
+        ]
+
+        for p in candidate_jsons:
+            if p.exists():
+                return p
+
+        raise FileNotFoundError(
+            "Cannot find template JSON ibm01.json. Tried: "
+            f"{[str(p) for p in candidate_jsons]}"
+        )
 
     def _restore_fixed_macros(self, placement, benchmark):
         fixed_mask = benchmark.macro_fixed
@@ -1065,19 +1127,38 @@ class Placer:
             this version returns the placement tensor required by evaluate.
         """
         json_path = self._resolve_json_file(benchmark=benchmark, json_file=json_file)
+
         params = Params.Params()
         params.load(str(json_path))
         params.regioning = False
+
+        # Infer the real case name from the incoming benchmark object first.
+        # If unavailable, fall back to command-line arguments such as "-b ibm01".
+        case_name = None
+        if benchmark is not None:
+            case_name = self._infer_case_name_from_benchmark(benchmark)
+        if case_name is None:
+            case_name = self._case_name_from_argv()
+        if case_name is None:
+            case_name = str(getattr(params, "case_name", "ibm01"))
+        case_name = str(case_name).lower()
+
+        # Override the ibm01 template JSON with the real case information.
+        params.case_name = case_name
+        params.benchmark_dir = str(self._resolve_benchmark_dir(case_name))
+
         loaded_benchmark, raw_plc = load_benchmark_from_dir(params.benchmark_dir)
         if benchmark is None:
             benchmark = loaded_benchmark
+
         netlist_file = os.path.join(params.benchmark_dir, 'netlist.pb.txt')
         plc_file = os.path.join(params.benchmark_dir, 'initial.plc')
         if verbose:
-            print(f'[INFO] json_file   : {json_path}', flush=True)
-            print(f'[INFO] netlist_file: {netlist_file}', flush=True)
-            print(f'[INFO] plc_file    : {plc_file}', flush=True)
-            print(f'[INFO] case_name   : {params.case_name}', flush=True)
+            print(f'[INFO] template_json: {json_path}', flush=True)
+            print(f'[INFO] real case_name: {params.case_name}', flush=True)
+            print(f'[INFO] benchmark_dir : {params.benchmark_dir}', flush=True)
+            print(f'[INFO] netlist_file : {netlist_file}', flush=True)
+            print(f'[INFO] plc_file     : {plc_file}', flush=True)
         weight_path = os.path.join(params.benchmark_dir, f'{params.case_name}.weight')
         if auto_cluster and (not os.path.exists(weight_path)):
             if verbose:

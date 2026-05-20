@@ -79,8 +79,7 @@ A pre-built Docker image can also be used to avoid manually building DREAMPlace 
 
 Download the Docker snapshot from:
 
-```bash
-<your-docker-download-link>
+
 
 ---
 
